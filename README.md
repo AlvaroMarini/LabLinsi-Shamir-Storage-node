@@ -97,6 +97,6 @@ pytest
 - [x] Motor matemático criptográfico sobre Campos Finitos.
 - [x] Validación de integridad de fragmentos (SHA-256).
 - [x] API REST para división (`/split`) y recuperación (`/recover`).
-- [ ] Desarrollo del cliente "Prover" (Frontend / Dashboard Web).
+- [x] Desarrollo del cliente "Prover" (Frontend / Dashboard Web).
 - [ ] Infraestructura de Nodos Distribuida (Dockerización de contenedores aislados).
 - [ ] Protocolos de comunicación Zero Trust entre el cliente y los nodos.
