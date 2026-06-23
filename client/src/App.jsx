@@ -17,7 +17,10 @@ function App() {
       setSplitError('')
       const response = await fetch('/api/split', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json', 
+          'x-api-key': import.meta.env.VITE_API_KEY
+        },
         body: JSON.stringify({ secret: secretToSplit, total_shares: 5, threshold: 3 })
       })
       
@@ -39,7 +42,10 @@ function App() {
       
       const response = await fetch('/api/recover', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: { 
+          'Content-Type': 'application/json',
+          'x-api-key': import.meta.env.VITE_API_KEY
+        },
         body: JSON.stringify({ shares: parsedShares, total_shares: 5, threshold: 3 })
       })
       

@@ -1,0 +1,47 @@
+version: '3.8'
+
+services:
+  node-1:
+    build: .
+    container_name: shamir-node-1
+    ports:
+      - "8001:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  node-2:
+    build: .
+    container_name: shamir-node-2
+    ports:
+      - "8002:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  node-3:
+    build: .
+    container_name: shamir-node-3
+    ports:
+      - "8003:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  node-4:
+    build: .
+    container_name: shamir-node-4
+    ports:
+      - "8004:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  node-5:
+    build: .
+    container_name: shamir-node-5
+    ports:
+      - "8005:8000"
+    env_file:
+      - .env
+    restart: unless-stopped

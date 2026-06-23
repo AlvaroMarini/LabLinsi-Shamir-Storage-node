@@ -7,7 +7,7 @@ export default defineConfig({
     proxy: {
       // Redirigimos todas las llamadas /api hacia tu backend de Python
       '/api': {
-        target: 'http://localhost:8000',
+        target: 'http://localhost:8001',
         changeOrigin: true,
       }
     }
