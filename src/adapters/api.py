@@ -32,6 +32,7 @@ NODES = [
 ]
 
 class SplitRequest(BaseModel):
+    secret_id: str
     secret: str
     total_shares: int = 5
     threshold: int = 3
@@ -66,7 +67,7 @@ async def split_secret(request: SplitRequest, api_key: str = Depends(get_api_key
             
             for i, share in enumerate(formatted_shares):
                 if i < len(NODES):
-                    url = f"{NODES[i]}/store"
+                    url = f"{NODES[i]}/store/{request.secret_id}"
                     tasks.append(client.post(url, json=share.model_dump(), headers=headers))
             
             # Disparamos las 5 peticiones HTTP al mismo tiempo
@@ -77,14 +78,14 @@ async def split_secret(request: SplitRequest, api_key: str = Depends(get_api_key
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
-@app.get("/api/recover", response_model=RecoverResponse)
-async def recover_secret(api_key: str = Depends(get_api_key)):
+@app.get("/api/recover/{secret_id}", response_model=RecoverResponse)
+async def recover_secret(secret_id: str, api_key: str = Depends(get_api_key)):
     recovered_shares = []
     
     # --- NUEVO: Recolectar fragmentos de las bóvedas ---
     async with httpx.AsyncClient(timeout=1.0) as client:
         headers = {"x-api-key": API_KEY}
-        tasks = [client.get(f"{node}/retrieve", headers=headers) for node in NODES]
+        tasks = [client.get(f"{node}/retrieve/{secret_id}", headers=headers) for node in NODES]
         
         results = await asyncio.gather(*tasks, return_exceptions=True)
         

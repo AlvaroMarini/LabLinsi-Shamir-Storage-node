@@ -22,19 +22,19 @@ class ShareData(BaseModel):
     y: str
     hash: str
 
-# Archivo local donde este nodo guardará su fragmento
-VAULT_FILE = "secret_share.json"
-
-@app.post("/store")
-def store_share(share: ShareData, api_key: str = Depends(get_api_key)):
-    with open(VAULT_FILE, "w") as f:
-        # Guardamos los datos en formato JSON
+# Guardamos usando el ID en la ruta
+@app.post("/store/{secret_id}")
+def store_share(secret_id: str, share: ShareData, api_key: str = Depends(get_api_key)):
+    file_name = f"share_{secret_id}.json"
+    with open(file_name, "w") as f:
         json.dump(share.model_dump(), f)
     return {"status": "Fragmento asegurado en bóveda local"}
 
-@app.get("/retrieve")
-def retrieve_share(api_key: str = Depends(get_api_key)):
-    if not os.path.exists(VAULT_FILE):
-        raise HTTPException(status_code=404, detail="Bóveda vacía")
-    with open(VAULT_FILE, "r") as f:
+# Recuperamos buscando el archivo con el ID específico
+@app.get("/retrieve/{secret_id}")
+def retrieve_share(secret_id: str, api_key: str = Depends(get_api_key)):
+    file_name = f"share_{secret_id}.json"
+    if not os.path.exists(file_name):
+        raise HTTPException(status_code=404, detail="Fragmento no encontrado en esta bóveda")
+    with open(file_name, "r") as f:
         return json.load(f)
