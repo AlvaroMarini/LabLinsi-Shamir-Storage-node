@@ -1,7 +1,6 @@
 version: '3.8'
 
 services:
-  # El coordinador central (La cara pública)
   gateway:
     build: .
     container_name: shamir-gateway
@@ -11,13 +10,14 @@ services:
       - .env
     restart: unless-stopped
 
-  # Las bóvedas ocultas (Sin puertos expuestos hacia afuera)
   node-1:
     build: .
     container_name: shamir-node-1
     command: uvicorn src.adapters.vault:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
+    volumes:
+      - ./bovedas_locales/nodo-1:/app/data   # <-- EL TÚNEL DE DATOS
     restart: unless-stopped
 
   node-2:
@@ -26,6 +26,8 @@ services:
     command: uvicorn src.adapters.vault:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
+    volumes:
+      - ./bovedas_locales/nodo-2:/app/data
     restart: unless-stopped
 
   node-3:
@@ -34,6 +36,8 @@ services:
     command: uvicorn src.adapters.vault:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
+    volumes:
+      - ./bovedas_locales/nodo-3:/app/data
     restart: unless-stopped
 
   node-4:
@@ -42,6 +46,8 @@ services:
     command: uvicorn src.adapters.vault:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
+    volumes:
+      - ./bovedas_locales/nodo-4:/app/data
     restart: unless-stopped
 
   node-5:
@@ -50,4 +56,6 @@ services:
     command: uvicorn src.adapters.vault:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
+    volumes:
+      - ./bovedas_locales/nodo-5:/app/data
     restart: unless-stopped

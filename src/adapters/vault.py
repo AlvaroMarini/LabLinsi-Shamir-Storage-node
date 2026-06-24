@@ -22,18 +22,20 @@ class ShareData(BaseModel):
     y: str
     hash: str
 
-# Guardamos usando el ID en la ruta
+# --- NUEVO: Asegurarnos de que el directorio de datos exista ---
+DATA_DIR = "data"
+os.makedirs(DATA_DIR, exist_ok=True)
+
 @app.post("/store/{secret_id}")
 def store_share(secret_id: str, share: ShareData, api_key: str = Depends(get_api_key)):
-    file_name = f"share_{secret_id}.json"
+    file_name = os.path.join(DATA_DIR, f"share_{secret_id}.json")
     with open(file_name, "w") as f:
         json.dump(share.model_dump(), f)
     return {"status": "Fragmento asegurado en bóveda local"}
 
-# Recuperamos buscando el archivo con el ID específico
 @app.get("/retrieve/{secret_id}")
 def retrieve_share(secret_id: str, api_key: str = Depends(get_api_key)):
-    file_name = f"share_{secret_id}.json"
+    file_name = os.path.join(DATA_DIR, f"share_{secret_id}.json")
     if not os.path.exists(file_name):
         raise HTTPException(status_code=404, detail="Fragmento no encontrado en esta bóveda")
     with open(file_name, "r") as f:

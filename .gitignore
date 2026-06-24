@@ -2,3 +2,6 @@ __pycache__/
 venv/
 .env
 repomix-output.xml
+
+# Almacenamiento local de los nodos (Zero Trust)
+bovedas_locales/
