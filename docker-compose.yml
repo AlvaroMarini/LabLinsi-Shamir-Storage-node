@@ -1,11 +1,21 @@
 version: '3.8'
 
 services:
+  # El coordinador central (La cara pública)
+  gateway:
+    build: .
+    container_name: shamir-gateway
+    ports:
+      - "8000:8000"
+    env_file:
+      - .env
+    restart: unless-stopped
+
+  # Las bóvedas ocultas (Sin puertos expuestos hacia afuera)
   node-1:
     build: .
     container_name: shamir-node-1
-    ports:
-      - "8001:8000"
+    command: uvicorn src.adapters.vault:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
     restart: unless-stopped
@@ -13,8 +23,7 @@ services:
   node-2:
     build: .
     container_name: shamir-node-2
-    ports:
-      - "8002:8000"
+    command: uvicorn src.adapters.vault:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
     restart: unless-stopped
@@ -22,8 +31,7 @@ services:
   node-3:
     build: .
     container_name: shamir-node-3
-    ports:
-      - "8003:8000"
+    command: uvicorn src.adapters.vault:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
     restart: unless-stopped
@@ -31,8 +39,7 @@ services:
   node-4:
     build: .
     container_name: shamir-node-4
-    ports:
-      - "8004:8000"
+    command: uvicorn src.adapters.vault:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
     restart: unless-stopped
@@ -40,8 +47,7 @@ services:
   node-5:
     build: .
     container_name: shamir-node-5
-    ports:
-      - "8005:8000"
+    command: uvicorn src.adapters.vault:app --host 0.0.0.0 --port 8000
     env_file:
       - .env
     restart: unless-stopped

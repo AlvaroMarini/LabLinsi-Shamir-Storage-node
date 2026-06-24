@@ -6,7 +6,7 @@ WORKDIR /app
 
 # Instalamos dependencias usando uv para máxima velocidad
 COPY pyproject.toml .
-RUN pip install uv && uv pip install --system fastapi uvicorn pydantic python-dotenv
+RUN pip install uv && uv pip install --system fastapi uvicorn pydantic python-dotenv httpx
 
 # Copiamos el código fuente (Arquitectura Hexagonal)
 COPY src/ ./src/
