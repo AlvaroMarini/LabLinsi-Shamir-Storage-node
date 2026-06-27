@@ -1,6 +1,7 @@
 import os
 import asyncio
 import httpx
+import hashlib
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Security, Depends
 from fastapi.security.api_key import APIKeyHeader
@@ -58,9 +59,11 @@ async def split_secret(request: SplitRequest, api_key: str = Depends(get_api_key
         shamir = ShamirScheme(total_shares=request.total_shares, threshold=request.threshold)
         secret_bytes = request.secret.encode('utf-8')
         raw_shares = shamir.split_secret(secret_bytes)
-        
+
+        hashed_owner = hashlib.sha256(request.owner_id.encode('utf-8')).hexdigest()
+
         vault_requests = [
-            VaultStoreRequest(x=share[0], y=share[1].hex(), hash=share[2], owner_id=request.owner_id) 
+            VaultStoreRequest(x=share[0], y=share[1].hex(), hash=share[2], owner_id=hashed_owner) 
             for share in raw_shares
         ]
         
@@ -87,11 +90,13 @@ async def split_secret(request: SplitRequest, api_key: str = Depends(get_api_key
 @app.get("/api/recover/{secret_id}", response_model=RecoverResponse)
 async def recover_secret(secret_id: str, owner_id: str, api_key: str = Depends(get_api_key)):
     recovered_shares = []
-    
+
+    hashed_owner = hashlib.sha256(owner_id.encode('utf-8')).hexdigest()
+
     async with httpx.AsyncClient(timeout=10.0) as client:
         headers = {"x-api-key": API_KEY}
         # Usamos params para enviar el owner_id de forma 100% segura
-        tasks = [client.get(f"{node}/retrieve/{secret_id}", params={"owner_id": owner_id}, headers=headers) for node in NODES]
+        tasks = [client.get(f"{node}/retrieve/{secret_id}", params={"owner_id": hashed_owner}, headers=headers) for node in NODES]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for response in results:
@@ -99,8 +104,9 @@ async def recover_secret(secret_id: str, owner_id: str, api_key: str = Depends(g
                 recovered_shares.append(ShareResponse(**response.json()))
 
     if len(recovered_shares) < 3:
-        errores = [r.status_code if not isinstance(r, Exception) else type(r).__name__ for r in results]
-        raise HTTPException(status_code=403, detail=f"Nodos insuficientes o acceso denegado. Respuestas internas: {errores}")
+        # errores = [r.status_code if not isinstance(r, Exception) else type(r).__name__ for r in results]
+        # raise HTTPException(status_code=403, detail=f"Nodos insuficientes o acceso denegado. Respuestas internas: {errores}") 
+        raise HTTPException(status_code=403, detail="Nodos insuficientes o acceso denegado.")
 
     try:
         shamir = ShamirScheme(total_shares=5, threshold=3)

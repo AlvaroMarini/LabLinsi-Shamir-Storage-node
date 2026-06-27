@@ -11,7 +11,6 @@ function App() {
   const [statusLeft, setStatusLeft] = useState('')
   const [statusRight, setStatusRight] = useState('')
 
-  // Estados para la animación de Drag & Drop
   const [isDraggingLeft, setIsDraggingLeft] = useState(false)
   const [isDraggingRight, setIsDraggingRight] = useState(false)
   
@@ -70,6 +69,11 @@ function App() {
       setFileToEncrypt(null)
       if (fileInputLeft.current) fileInputLeft.current.value = ""
 
+      // Borrar el mensaje de éxito a los 5 segundos
+      setTimeout(() => {
+        setStatusLeft(prevStatus => prevStatus.includes('¡Éxito!') ? '' : prevStatus)
+      }, 5000)
+
     } catch (err) {
       setStatusLeft(`Error: ${err.message}`)
     }
@@ -126,6 +130,12 @@ function App() {
         setEncryptedFile(null)
         if (fileInputRight.current) fileInputRight.current.value = ""
         URL.revokeObjectURL(downloadUrl)
+
+        // Borrar el mensaje de éxito a los 5 segundos
+        setTimeout(() => {
+          setStatusRight(prevStatus => prevStatus.includes('¡Éxito!') ? '' : prevStatus)
+        }, 5000)
+
       }, 150)
 
     } catch (err) {
@@ -148,7 +158,7 @@ function App() {
           type="text" 
           value={ownerId}
           onChange={(e) => setOwnerId(e.target.value)}
-          placeholder="Ej: alvaro_admin"
+          placeholder="Ej: lab_linsi"
           className="w-full p-2 bg-slate-900 border border-slate-700 rounded text-slate-200 text-center focus:outline-none focus:border-blue-500 transition-colors"
         />
         <p className="text-xs text-slate-400 mt-2 text-center">Este ID es necesario tanto para cifrar como para recuperar.</p>
@@ -189,7 +199,10 @@ function App() {
           >
             Cifrar Localmente y Proteger Clave
           </button>
-          {statusLeft && <div className="mt-4 p-3 bg-slate-900 border border-slate-700 rounded text-sm text-slate-300">{statusLeft}</div>}
+          
+          <div className="mt-4 min-h-12">
+            {statusLeft && <div className="p-3 bg-slate-900 border border-slate-700 rounded text-sm text-slate-300">{statusLeft}</div>}
+          </div>
         </div>
 
         {/* PANEL DERECHO: DESCIFRAR */}
@@ -227,7 +240,10 @@ function App() {
           >
             Consultar Clave y Descifrar Archivo
           </button>
-          {statusRight && <div className="mt-4 p-3 bg-slate-900 border border-slate-700 rounded text-sm text-slate-300">{statusRight}</div>}
+          
+          <div className="mt-4 min-h-12">
+            {statusRight && <div className="p-3 bg-slate-900 border border-slate-700 rounded text-sm text-slate-300">{statusRight}</div>}
+          </div>
         </div>
       </div>
     </div>
