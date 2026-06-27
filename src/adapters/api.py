@@ -14,15 +14,12 @@ API_KEY = os.getenv("API_KEY")
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
 
 def get_api_key(api_key: str = Security(api_key_header)):
-    if API_KEY is None:
-        raise HTTPException(status_code=500, detail="Error de configuración: API_KEY no definida.")
-    if api_key != API_KEY:
+    if API_KEY is None or api_key != API_KEY:
         raise HTTPException(status_code=403, detail="Acceso denegado (Zero Trust Policy).")
     return api_key
 
 app = FastAPI(title="Shamir Gateway Node")
 
-# --- Nodos internos de la red Docker ---
 NODES = [
     "http://node-1:8000",
     "http://node-2:8000",
@@ -34,6 +31,7 @@ NODES = [
 class SplitRequest(BaseModel):
     secret_id: str
     secret: str
+    owner_id: str
     total_shares: int = 5
     threshold: int = 3
 
@@ -41,6 +39,12 @@ class ShareResponse(BaseModel):
     x: int
     y: str  
     hash: str  
+
+class VaultStoreRequest(BaseModel):
+    x: int
+    y: str
+    hash: str
+    owner_id: str
 
 class SplitResponse(BaseModel):
     shares: list[ShareResponse]
@@ -55,60 +59,53 @@ async def split_secret(request: SplitRequest, api_key: str = Depends(get_api_key
         secret_bytes = request.secret.encode('utf-8')
         raw_shares = shamir.split_secret(secret_bytes)
         
-        formatted_shares = [
-            ShareResponse(x=share[0], y=share[1].hex(), hash=share[2]) 
+        vault_requests = [
+            VaultStoreRequest(x=share[0], y=share[1].hex(), hash=share[2], owner_id=request.owner_id) 
             for share in raw_shares
         ]
         
-        # --- NUEVO: Distribuir fragmentos a las bóvedas ---
-        async with httpx.AsyncClient(timeout=1.0) as client:
+        async with httpx.AsyncClient(timeout=10.0) as client:
             headers = {"x-api-key": API_KEY}
             tasks = []
-            
-            for i, share in enumerate(formatted_shares):
+            for i, share_req in enumerate(vault_requests):
                 if i < len(NODES):
                     url = f"{NODES[i]}/store/{request.secret_id}"
-                    tasks.append(client.post(url, json=share.model_dump(), headers=headers))
+                    tasks.append(client.post(url, json=share_req.model_dump(), headers=headers))
             
-            # Disparamos las 5 peticiones HTTP al mismo tiempo
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
             
-        return SplitResponse(shares=formatted_shares)
+            success_count = sum(1 for r in results if not isinstance(r, Exception) and r.status_code == 200)
+            if success_count < request.threshold:
+                errores = [r.status_code if not isinstance(r, Exception) else type(r).__name__ for r in results]
+                raise HTTPException(status_code=500, detail=f"Fallo de escritura en bóvedas. Detalles: {errores}")
+            
+        return SplitResponse(shares=[ShareResponse(**req.model_dump()) for req in vault_requests])
         
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/recover/{secret_id}", response_model=RecoverResponse)
-async def recover_secret(secret_id: str, api_key: str = Depends(get_api_key)):
+async def recover_secret(secret_id: str, owner_id: str, api_key: str = Depends(get_api_key)):
     recovered_shares = []
     
-    # --- NUEVO: Recolectar fragmentos de las bóvedas ---
-    async with httpx.AsyncClient(timeout=1.0) as client:
+    async with httpx.AsyncClient(timeout=10.0) as client:
         headers = {"x-api-key": API_KEY}
-        tasks = [client.get(f"{node}/retrieve/{secret_id}", headers=headers) for node in NODES]
-        
+        # Usamos params para enviar el owner_id de forma 100% segura
+        tasks = [client.get(f"{node}/retrieve/{secret_id}", params={"owner_id": owner_id}, headers=headers) for node in NODES]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
         for response in results:
             if not isinstance(response, Exception) and response.status_code == 200:
-                data = response.json()
-                recovered_shares.append(ShareResponse(**data))
+                recovered_shares.append(ShareResponse(**response.json()))
 
-    # Validamos si juntamos el umbral mínimo (3)
     if len(recovered_shares) < 3:
-        raise HTTPException(status_code=400, detail=f"Nodos insuficientes. Fragmentos recuperados: {len(recovered_shares)}")
+        errores = [r.status_code if not isinstance(r, Exception) else type(r).__name__ for r in results]
+        raise HTTPException(status_code=403, detail=f"Nodos insuficientes o acceso denegado. Respuestas internas: {errores}")
 
     try:
         shamir = ShamirScheme(total_shares=5, threshold=3)
-        raw_shares = [
-            (share.x, bytes.fromhex(share.y), share.hash)
-            for share in recovered_shares
-        ]
-        
+        raw_shares = [(s.x, bytes.fromhex(s.y), s.hash) for s in recovered_shares]
         secret_bytes = shamir.recover_secret(raw_shares)
-        secret_str = secret_bytes.decode('utf-8').replace('\x00', '')
-        
-        return RecoverResponse(secret=secret_str)
-        
+        return RecoverResponse(secret=secret_bytes.decode('utf-8').replace('\x00', ''))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Error al interpolar: {str(e)}")

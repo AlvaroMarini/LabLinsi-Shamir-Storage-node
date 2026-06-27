@@ -1,58 +1,44 @@
 import { useState, useRef } from 'react'
 
-// --- FUNCIONES AUXILIARES PARA CRIPTOGRAFÍA ---
 const buf2hex = (buffer) => [...new Uint8Array(buffer)].map(x => x.toString(16).padStart(2, '0')).join('')
 const hex2buf = (hex) => new Uint8Array(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)))
 
 function App() {
-  // Estados UI
   const [fileToEncrypt, setFileToEncrypt] = useState(null)
   const [encryptedFile, setEncryptedFile] = useState(null)
+  const [ownerId, setOwnerId] = useState('') 
+  
   const [statusLeft, setStatusLeft] = useState('')
   const [statusRight, setStatusRight] = useState('')
+
+  // Estados para la animación de Drag & Drop
+  const [isDraggingLeft, setIsDraggingLeft] = useState(false)
+  const [isDraggingRight, setIsDraggingRight] = useState(false)
   
   const fileInputLeft = useRef(null)
   const fileInputRight = useRef(null)
 
   // ==========================================
-  // FASE 3: CIFRADO LOCAL Y DISTRIBUCIÓN
+  // LÓGICA DE CIFRADO Y DISTRIBUCIÓN
   // ==========================================
   const handleEncryptAndSplit = async () => {
-    if (!fileToEncrypt) {
-      setStatusLeft('Por favor selecciona un archivo primero.')
+    if (!fileToEncrypt || !ownerId) {
+      setStatusLeft('Selecciona un archivo e ingresa tu PIN de usuario.')
       return
     }
 
     try {
-      setStatusLeft('Generando clave AES y cifrando archivo localmente...')
-      
-      // 1. Leer el archivo como ArrayBuffer
       const fileBuffer = await fileToEncrypt.arrayBuffer()
-
-      // 2. Generar llave AES-256-GCM
       const aesKey = await window.crypto.subtle.generateKey(
-        { name: "AES-GCM", length: 256 },
-        true, // Permite exportar la llave
-        ["encrypt", "decrypt"]
+        { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
       )
-
-      // 3. Crear un Vector de Inicialización (IV) aleatorio (necesario para GCM)
       const iv = window.crypto.getRandomValues(new Uint8Array(12))
-
-      // 4. Cifrar el archivo
-      const ciphertext = await window.crypto.subtle.encrypt(
-        { name: "AES-GCM", iv: iv },
-        aesKey,
-        fileBuffer
-      )
+      const ciphertext = await window.crypto.subtle.encrypt({ name: "AES-GCM", iv: iv }, aesKey, fileBuffer)
 
       const secretId = crypto.randomUUID()
       const secretIdBytes = new TextEncoder().encode(secretId)
-
-      // 5. Empaquetar el IV junto con el archivo cifrado para poder descifrarlo después
       const encryptedBlob = new Blob([secretIdBytes, iv, ciphertext], { type: 'application/octet-stream' })
       
-      // 6. Descargar el archivo cifrado (.enc) simulando almacenamiento local
       const downloadUrl = URL.createObjectURL(encryptedBlob)
       const a = document.createElement('a')
       a.href = downloadUrl
@@ -60,13 +46,9 @@ function App() {
       a.click()
       URL.revokeObjectURL(downloadUrl)
 
-      // 7. Exportar la llave AES a formato Hexadecimal para enviarla a Shamir
       const rawKey = await window.crypto.subtle.exportKey("raw", aesKey)
       const secretKeyHex = buf2hex(rawKey)
 
-      setStatusLeft('Clave generada. Enviando al Gateway para fragmentación...')
-
-      // 8. Enviar SOLAMENTE la llave a nuestra API Python (Zero Trust)
       const response = await fetch('/api/split', {
         method: 'POST',
         headers: { 
@@ -76,16 +58,17 @@ function App() {
         body: JSON.stringify({
           secret_id: secretId,
           secret: secretKeyHex, 
+          owner_id: ownerId, 
           total_shares: 5, 
           threshold: 3 
         })
       })
 
-      if (!response.ok) throw new Error('Error al fragmentar en la red de nodos')
+      if (!response.ok) throw new Error('Error en la red de nodos')
       
-      setStatusLeft(`¡Éxito! Archivo cifrado descargado y clave AES distribuida en 5 bóvedas.`)
+      setStatusLeft(`¡Éxito! Archivo cifrado. Protegido bajo el usuario: ${ownerId}`)
       setFileToEncrypt(null)
-      fileInputLeft.current.value = ""
+      if (fileInputLeft.current) fileInputLeft.current.value = ""
 
     } catch (err) {
       setStatusLeft(`Error: ${err.message}`)
@@ -93,66 +76,43 @@ function App() {
   }
 
   // ==========================================
-  // FASE 4: RECOLECCIÓN Y DESCIFRADO LOCAL
+  // LÓGICA DE RECUPERACIÓN Y DESCIFRADO
   // ==========================================
   const handleRecoverAndDecrypt = async () => {
-    if (!encryptedFile) {
-      setStatusRight('Por favor selecciona el archivo .enc primero.')
+    if (!encryptedFile || !ownerId) {
+      setStatusRight('Sube el archivo .enc e ingresa el PIN dueño del archivo.')
       return
     }
 
     try {
-      setStatusRight('Leyendo archivo e identificando UUID...')
-
-      // 1. Leer el archivo subido
       const fileBuffer = await encryptedFile.arrayBuffer()
-      
-      // 2. Extraer el UUID (los primeros 36 bytes)
       const secretIdBytes = fileBuffer.slice(0, 36)
       const secretId = new TextDecoder().decode(secretIdBytes)
-
-      // 3. Extraer el IV (desde el byte 36 al 48)
       const iv = fileBuffer.slice(36, 48)
-      
-      // 4. Extraer el texto cifrado (desde el byte 48 en adelante)
       const ciphertext = fileBuffer.slice(48)
 
-      setStatusRight(`⏳ Archivo detectado (ID: ${secretId.substring(0,8)}...). Consultando nodos...`)
-
-      // 5. Pedirle al Gateway la llave de ese archivo específico
-      const response = await fetch(`/api/recover/${secretId}`, {
+      const response = await fetch(`/api/recover/${secretId}?owner_id=${encodeURIComponent(ownerId)}`, {
         method: 'GET',
         headers: { 'x-api-key': import.meta.env.VITE_API_KEY }
       })
       
       if (!response.ok) {
-        const errData = await response.json()
-        throw new Error(errData.detail || 'Nodos insuficientes o error de red.')
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.detail || 'Las bóvedas denegaron el acceso. Usuario incorrecto.');
       }
 
       const data = await response.json()
-      const recoveredHexKey = data.secret // Esta es nuestra llave AES en texto
+      const recoveredHexKey = data.secret 
 
-      setStatusRight('Clave recuperada. Descifrando archivo localmente...')
-
-      // 6. Reconstruir la llave AES en el navegador
       const rawKeyBuffer = hex2buf(recoveredHexKey)
       const aesKey = await window.crypto.subtle.importKey(
-        "raw",
-        rawKeyBuffer,
-        { name: "AES-GCM", length: 256 },
-        true,
-        ["encrypt", "decrypt"]
+        "raw", rawKeyBuffer, { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
       )
 
-      // 7. Descifrar
       const decryptedBuffer = await window.crypto.subtle.decrypt(
-        { name: "AES-GCM", iv: iv },
-        aesKey,
-        ciphertext
+        { name: "AES-GCM", iv: iv }, aesKey, ciphertext
       )
 
-      // 8. Descargar el archivo original restaurado
       const originalName = encryptedFile.name.replace('.enc', '')
       const decryptedBlob = new Blob([decryptedBuffer])
       const downloadUrl = URL.createObjectURL(decryptedBlob)
@@ -160,14 +120,16 @@ function App() {
       a.href = downloadUrl
       a.download = originalName || 'archivo_recuperado.bin'
       a.click()
-      URL.revokeObjectURL(downloadUrl)
-
-      setStatusRight('¡Éxito! Clave reconstruida y archivo original descifrado y descargado.')
-      setEncryptedFile(null)
-      fileInputRight.current.value = ""
+      
+      setTimeout(() => {
+        setStatusRight('¡Éxito! Archivo descifrado y descargado.')
+        setEncryptedFile(null)
+        if (fileInputRight.current) fileInputRight.current.value = ""
+        URL.revokeObjectURL(downloadUrl)
+      }, 150)
 
     } catch (err) {
-      setStatusRight(`Fallo de seguridad: ${err.message}`)
+      setStatusRight(`Bloqueo de Seguridad: ${err.message}`)
     }
   }
 
@@ -175,70 +137,98 @@ function App() {
     <div className="min-h-screen bg-slate-900 text-slate-100 p-8 font-sans">
       <header className="mb-10 text-center">
         <h1 className="text-4xl font-bold text-blue-400 mb-2">Shamir Storage Node</h1>
-        <p className="text-slate-400">Plataforma Zero Trust - Cifrado AES-256 + VSS Distribuido</p>
+        <p className="text-slate-400">Plataforma Zero Trust - Cifrado AES-256 + IAM</p>
       </header>
 
+      <div className="max-w-md mx-auto mb-10 bg-slate-800 p-4 rounded-lg border border-slate-600 shadow-md">
+        <label className="block text-sm font-semibold text-slate-200 mb-2 text-center">
+          Identidad / PIN de Seguridad
+        </label>
+        <input 
+          type="text" 
+          value={ownerId}
+          onChange={(e) => setOwnerId(e.target.value)}
+          placeholder="Ej: alvaro_admin"
+          className="w-full p-2 bg-slate-900 border border-slate-700 rounded text-slate-200 text-center focus:outline-none focus:border-blue-500 transition-colors"
+        />
+        <p className="text-xs text-slate-400 mt-2 text-center">Este ID es necesario tanto para cifrar como para recuperar.</p>
+      </div>
+
       <div className="grid md:grid-cols-2 gap-8 max-w-6xl mx-auto">
-        
-        {/* --- PANEL IZQUIERDO: UPLOAD --- */}
-        <div className="bg-slate-800 p-6 rounded-xl shadow-lg border border-slate-700">
+        {/* PANEL IZQUIERDO: CIFRAR */}
+        <div className="bg-slate-800 p-6 rounded-xl shadow-lg border border-slate-700 flex flex-col">
           <h2 className="text-2xl font-semibold mb-4 text-emerald-400">1. Cifrar y Distribuir</h2>
-          <p className="text-sm text-slate-400 mb-6">El archivo se cifra en tu navegador. Solo la clave generada viaja al clúster para ser fragmentada.</p>
           
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-slate-300 mb-2">Seleccionar archivo a proteger:</label>
+          <div 
+            onDragOver={(e) => { e.preventDefault(); setIsDraggingLeft(true); }}
+            onDragLeave={() => setIsDraggingLeft(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDraggingLeft(false);
+              if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                setFileToEncrypt(e.dataTransfer.files[0]);
+                if (fileInputLeft.current) fileInputLeft.current.files = e.dataTransfer.files;
+              }
+            }}
+            className={`mb-6 p-6 border-2 border-dashed rounded-lg transition-all text-center grow flex flex-col justify-center items-center gap-3 ${
+              isDraggingLeft ? 'border-emerald-400 bg-emerald-900/30' : 'border-slate-600 hover:border-slate-500'
+            }`}
+          >
             <input 
               type="file" 
               ref={fileInputLeft}
               onChange={(e) => setFileToEncrypt(e.target.files[0])}
-              className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-emerald-900 file:text-emerald-300 hover:file:bg-emerald-800"
+              className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-emerald-900 file:text-emerald-300 hover:file:bg-emerald-800 cursor-pointer"
             />
+            <p className="text-sm text-slate-400 pointer-events-none">O arrastra tu archivo original aquí</p>
           </div>
 
           <button 
             onClick={handleEncryptAndSplit}
-            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-4 rounded transition-colors shadow-[0_0_15px_rgba(16,185,129,0.3)]"
+            className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold py-3 px-4 rounded transition-colors shadow-[0_0_15px_rgba(16,185,129,0.3)] mt-auto"
           >
             Cifrar Localmente y Proteger Clave
           </button>
-
-          {statusLeft && (
-            <div className="mt-4 p-3 bg-slate-900 border border-slate-700 rounded text-sm text-slate-300">
-              {statusLeft}
-            </div>
-          )}
+          {statusLeft && <div className="mt-4 p-3 bg-slate-900 border border-slate-700 rounded text-sm text-slate-300">{statusLeft}</div>}
         </div>
 
-        {/* --- PANEL DERECHO: DOWNLOAD --- */}
-        <div className="bg-slate-800 p-6 rounded-xl shadow-lg border border-slate-700">
+        {/* PANEL DERECHO: DESCIFRAR */}
+        <div className="bg-slate-800 p-6 rounded-xl shadow-lg border border-slate-700 flex flex-col">
           <h2 className="text-2xl font-semibold mb-4 text-purple-400">2. Reconstruir y Descifrar</h2>
-          <p className="text-sm text-slate-400 mb-6">Se consultará a la red por la clave. Si el umbral de nodos (3/5) es exitoso, se descifrará tu archivo.</p>
           
-          <div className="mb-6">
-            <label className="block text-sm font-medium text-slate-300 mb-2">Subir archivo bloqueado (.enc):</label>
+          <div 
+            onDragOver={(e) => { e.preventDefault(); setIsDraggingRight(true); }}
+            onDragLeave={() => setIsDraggingRight(false)}
+            onDrop={(e) => {
+              e.preventDefault();
+              setIsDraggingRight(false);
+              if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                setEncryptedFile(e.dataTransfer.files[0]);
+                if (fileInputRight.current) fileInputRight.current.files = e.dataTransfer.files;
+              }
+            }}
+            className={`mb-6 p-6 border-2 border-dashed rounded-lg transition-all text-center grow flex flex-col justify-center items-center gap-3 ${
+              isDraggingRight ? 'border-purple-400 bg-purple-900/30' : 'border-slate-600 hover:border-slate-500'
+            }`}
+          >
             <input 
               type="file" 
               accept=".enc"
               ref={fileInputRight}
               onChange={(e) => setEncryptedFile(e.target.files[0])}
-              className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-900 file:text-purple-300 hover:file:bg-purple-800"
+              className="w-full text-sm text-slate-400 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-purple-900 file:text-purple-300 hover:file:bg-purple-800 cursor-pointer"
             />
+            <p className="text-sm text-slate-400 pointer-events-none">O arrastra tu archivo .enc aquí</p>
           </div>
 
           <button 
             onClick={handleRecoverAndDecrypt}
-            className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-4 rounded transition-colors shadow-[0_0_15px_rgba(168,85,247,0.3)]"
+            className="w-full bg-purple-600 hover:bg-purple-500 text-white font-bold py-3 px-4 rounded transition-colors shadow-[0_0_15px_rgba(168,85,247,0.3)] mt-auto"
           >
             Consultar Clave y Descifrar Archivo
           </button>
-
-          {statusRight && (
-            <div className="mt-4 p-3 bg-slate-900 border border-slate-700 rounded text-sm text-slate-300">
-              {statusRight}
-            </div>
-          )}
+          {statusRight && <div className="mt-4 p-3 bg-slate-900 border border-slate-700 rounded text-sm text-slate-300">{statusRight}</div>}
         </div>
-
       </div>
     </div>
   )
