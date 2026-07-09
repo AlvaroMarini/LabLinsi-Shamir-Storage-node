@@ -10,13 +10,16 @@ from src.domain.shamir import ShamirScheme
 
 load_dotenv()
 
-API_KEY_NAME = "x-api-key"
-API_KEY = os.getenv("API_KEY")
-api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=True)
+# --- SEGMENTACIÓN DE CREDENCIALES ---
+PUBLIC_API_KEY = os.getenv("PUBLIC_API_KEY")
+INTERNAL_CLUSTER_KEY = os.getenv("INTERNAL_CLUSTER_KEY")
 
-def get_api_key(api_key: str = Security(api_key_header)):
-    if API_KEY is None or api_key != API_KEY:
-        raise HTTPException(status_code=403, detail="Acceso denegado (Zero Trust Policy).")
+api_key_header = APIKeyHeader(name="x-api-key", auto_error=True)
+
+def validate_public_key(api_key: str = Security(api_key_header)):
+    """Valida la petición entrante desde el Frontend."""
+    if PUBLIC_API_KEY is None or api_key != PUBLIC_API_KEY:
+        raise HTTPException(status_code=403, detail="Acceso denegado: Llave pública inválida (Gateway DMZ).")
     return api_key
 
 app = FastAPI(title="Shamir Gateway Node")
@@ -54,7 +57,7 @@ class RecoverResponse(BaseModel):
     secret: str
 
 @app.post("/api/split", response_model=SplitResponse)
-async def split_secret(request: SplitRequest, api_key: str = Depends(get_api_key)):
+async def split_secret(request: SplitRequest, api_key: str = Depends(validate_public_key)):
     try:
         shamir = ShamirScheme(total_shares=request.total_shares, threshold=request.threshold)
         secret_bytes = request.secret.encode('utf-8')
@@ -68,7 +71,8 @@ async def split_secret(request: SplitRequest, api_key: str = Depends(get_api_key
         ]
         
         async with httpx.AsyncClient(timeout=10.0) as client:
-            headers = {"x-api-key": API_KEY}
+            # ENVIAMOS LA LLAVE PRIVADA A LAS BÓVEDAS
+            headers = {"x-api-key": INTERNAL_CLUSTER_KEY}
             tasks = []
             for i, share_req in enumerate(vault_requests):
                 if i < len(NODES):
@@ -88,14 +92,14 @@ async def split_secret(request: SplitRequest, api_key: str = Depends(get_api_key
         raise HTTPException(status_code=400, detail=str(e))
 
 @app.get("/api/recover/{secret_id}", response_model=RecoverResponse)
-async def recover_secret(secret_id: str, owner_id: str, api_key: str = Depends(get_api_key)):
+async def recover_secret(secret_id: str, owner_id: str, api_key: str = Depends(validate_public_key)):
     recovered_shares = []
 
     hashed_owner = hashlib.sha256(owner_id.encode('utf-8')).hexdigest()
 
     async with httpx.AsyncClient(timeout=10.0) as client:
-        headers = {"x-api-key": API_KEY}
-        # Usamos params para enviar el owner_id de forma 100% segura
+        # ENVIAMOS LA LLAVE PRIVADA A LAS BÓVEDAS
+        headers = {"x-api-key": INTERNAL_CLUSTER_KEY}
         tasks = [client.get(f"{node}/retrieve/{secret_id}", params={"owner_id": hashed_owner}, headers=headers) for node in NODES]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         
@@ -104,8 +108,6 @@ async def recover_secret(secret_id: str, owner_id: str, api_key: str = Depends(g
                 recovered_shares.append(ShareResponse(**response.json()))
 
     if len(recovered_shares) < 3:
-        # errores = [r.status_code if not isinstance(r, Exception) else type(r).__name__ for r in results]
-        # raise HTTPException(status_code=403, detail=f"Nodos insuficientes o acceso denegado. Respuestas internas: {errores}") 
         raise HTTPException(status_code=403, detail="Nodos insuficientes o acceso denegado.")
 
     try:
