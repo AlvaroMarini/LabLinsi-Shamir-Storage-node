@@ -1,5 +1,20 @@
 services:
-  # 1. CAPA DE PRESENTACIÓN (Expuesta al exterior)
+  # 1. ESCUDO PERIMETRAL (WAF)
+  waf:
+    image: owasp/modsecurity-crs:nginx-alpine
+    container_name: shamir-waf
+    environment:
+      # Le indicamos al WAF a quién debe proteger
+      - BACKEND=http://frontend:80
+    ports:
+      - "5173:80" # El WAF es ahora el único que da la cara al mundo
+    networks:
+      - public_net
+    restart: unless-stopped
+    depends_on:
+      - frontend
+
+  # 2. CAPA DE PRESENTACIÓN (Oculta detrás del WAF)
   frontend:
     build: 
       context: ./client
@@ -7,15 +22,14 @@ services:
       args:
         - VITE_API_KEY=${PUBLIC_API_KEY}
     container_name: shamir-frontend
-    ports:
-      - "5173:80"
+    # NOTA: Borramos el "ports: 5173:80". El frontend ya no tiene salida directa.
     networks:
       - public_net
     restart: unless-stopped
     depends_on:
       - gateway
 
-  # 2. CAPA DE INTERMEDIACIÓN (El Puente / DMZ)
+  # 3. CAPA DE INTERMEDIACIÓN (El Puente / DMZ)
   gateway:
     build: 
       context: ./backend
@@ -28,7 +42,7 @@ services:
       - private_net
     restart: unless-stopped
 
-  # 3. CAPA DE ALMACENAMIENTO (Aislada y ciega)
+  # 4. CAPA DE ALMACENAMIENTO (Aislada y ciega)
   node-1:
     build: 
       context: ./backend
