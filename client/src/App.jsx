@@ -1,12 +1,22 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
+import Keycloak from 'keycloak-js'
 
 const buf2hex = (buffer) => [...new Uint8Array(buffer)].map(x => x.toString(16).padStart(2, '0')).join('')
 const hex2buf = (hex) => new Uint8Array(hex.match(/.{1,2}/g).map(byte => parseInt(byte, 16)))
 
+// Configuración de Keycloak
+const keycloak = new Keycloak({
+  url: 'http://localhost:8080',
+  realm: 'shamir-realm',
+  clientId: 'shamir-react-client'
+});
+
 function App() {
+  const [keycloakInitialized, setKeycloakInitialized] = useState(false)
+  const [authenticated, setAuthenticated] = useState(false)
+
   const [fileToEncrypt, setFileToEncrypt] = useState(null)
   const [encryptedFile, setEncryptedFile] = useState(null)
-  const [ownerId, setOwnerId] = useState('') 
   
   const [statusLeft, setStatusLeft] = useState('')
   const [statusRight, setStatusRight] = useState('')
@@ -17,16 +27,37 @@ function App() {
   const fileInputLeft = useRef(null)
   const fileInputRight = useRef(null)
 
+// Inicializar Keycloak al montar el componente
+  useEffect(() => {
+    keycloak.init({ 
+      onLoad: 'login-required',
+      checkLoginIframe: false // <-- CLAVE: Desactiva el iframe que bloquea el navegador
+    })
+      .then(auth => {
+        setAuthenticated(auth)
+        setKeycloakInitialized(true)
+      })
+      .catch(err => {
+        console.error("Error crítico inicializando Keycloak:", err)
+        // Si falla, forzamos la salida de la pantalla de carga para ver el error
+        setKeycloakInitialized(true)
+        alert("Fallo la conexión con Keycloak. Revisá la consola del navegador (F12).")
+      })
+  }, [])
+
   // ==========================================
   // LÓGICA DE CIFRADO Y DISTRIBUCIÓN
   // ==========================================
   const handleEncryptAndSplit = async () => {
-    if (!fileToEncrypt || !ownerId) {
-      setStatusLeft('Selecciona un archivo e ingresa tu PIN de usuario.')
+    if (!fileToEncrypt) {
+      setStatusLeft('Selecciona un archivo primero.')
       return
     }
 
     try {
+      // Usamos el ID interno único de Keycloak (subject) o el username como owner_id
+      const ownerId = keycloak.subject || keycloak.tokenParsed.preferred_username;
+
       const fileBuffer = await fileToEncrypt.arrayBuffer()
       const aesKey = await window.crypto.subtle.generateKey(
         { name: "AES-GCM", length: 256 }, true, ["encrypt", "decrypt"]
@@ -52,12 +83,13 @@ function App() {
         method: 'POST',
         headers: { 
           'Content-Type': 'application/json',
-          'x-api-key': import.meta.env.VITE_API_KEY
+          'x-api-key': import.meta.env.VITE_API_KEY,
+          // AGREGAMOS EL TOKEN JWT EN LOS HEADERS
+          'Authorization': `Bearer ${keycloak.token}`
         },
         body: JSON.stringify({
           secret_id: secretId,
           secret: secretKeyHex, 
-          owner_id: ownerId, 
           total_shares: 5, 
           threshold: 3 
         })
@@ -65,11 +97,10 @@ function App() {
 
       if (!response.ok) throw new Error('Error en la red de nodos')
       
-      setStatusLeft(`¡Éxito! Archivo cifrado. Protegido bajo el usuario: ${ownerId}`)
+      setStatusLeft(`¡Éxito! Archivo cifrado. Protegido bajo el usuario: ${keycloak.tokenParsed.preferred_username}`)
       setFileToEncrypt(null)
       if (fileInputLeft.current) fileInputLeft.current.value = ""
 
-      // Borrar el mensaje de éxito a los 5 segundos
       setTimeout(() => {
         setStatusLeft(prevStatus => prevStatus.includes('¡Éxito!') ? '' : prevStatus)
       }, 5000)
@@ -83,12 +114,14 @@ function App() {
   // LÓGICA DE RECUPERACIÓN Y DESCIFRADO
   // ==========================================
   const handleRecoverAndDecrypt = async () => {
-    if (!encryptedFile || !ownerId) {
-      setStatusRight('Sube el archivo .enc e ingresa el PIN dueño del archivo.')
+    if (!encryptedFile) {
+      setStatusRight('Sube el archivo .enc primero.')
       return
     }
 
     try {
+      const ownerId = keycloak.subject || keycloak.tokenParsed.preferred_username;
+
       const fileBuffer = await encryptedFile.arrayBuffer()
       const secretIdBytes = fileBuffer.slice(0, 36)
       const secretId = new TextDecoder().decode(secretIdBytes)
@@ -97,12 +130,16 @@ function App() {
 
       const response = await fetch(`/api/recover/${secretId}?owner_id=${encodeURIComponent(ownerId)}`, {
         method: 'GET',
-        headers: { 'x-api-key': import.meta.env.VITE_API_KEY }
+        headers: { 
+          'x-api-key': import.meta.env.VITE_API_KEY,
+          // AGREGAMOS EL TOKEN JWT EN LOS HEADERS
+          'Authorization': `Bearer ${keycloak.token}`
+        }
       })
       
       if (!response.ok) {
         const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.detail || 'Las bóvedas denegaron el acceso. Usuario incorrecto.');
+        throw new Error(errorData.detail || 'Las bóvedas denegaron el acceso.');
       }
 
       const data = await response.json()
@@ -131,7 +168,6 @@ function App() {
         if (fileInputRight.current) fileInputRight.current.value = ""
         URL.revokeObjectURL(downloadUrl)
 
-        // Borrar el mensaje de éxito a los 5 segundos
         setTimeout(() => {
           setStatusRight(prevStatus => prevStatus.includes('¡Éxito!') ? '' : prevStatus)
         }, 5000)
@@ -143,28 +179,25 @@ function App() {
     }
   }
 
+  // Mostrar una pantalla de carga mientras Keycloak valida la sesión
+  if (!keycloakInitialized) {
+    return <div className="min-h-screen bg-slate-900 text-slate-100 flex items-center justify-center">Conectando con el Servidor de Identidad...</div>
+  }
+
   return (
     <div className="min-h-screen bg-slate-900 text-slate-100 p-8 font-sans">
-      <header className="mb-10 text-center">
-        <h1 className="text-4xl font-bold text-blue-400 mb-2">Shamir Storage Node</h1>
-        <p className="text-slate-400">Plataforma Zero Trust - Cifrado AES-256 + IAM</p>
+      <header className="mb-10 text-center relative">
+        <div className="absolute top-0 right-0 text-sm text-slate-400 flex items-center gap-4">
+          <span>Usuario: <strong className="text-blue-400">{keycloak.tokenParsed?.preferred_username}</strong></span>
+          <button onClick={() => keycloak.logout()} className="text-red-400 hover:text-red-300 underline">Cerrar Sesión</button>
+        </div>
+        <h1 className="text-4xl font-bold text-blue-400 mb-2 mt-8">Shamir Storage Node</h1>
+        <p className="text-slate-400">Plataforma Zero Trust - Cifrado AES-256 + Identidad Federada</p>
       </header>
 
-      <div className="max-w-md mx-auto mb-10 bg-slate-800 p-4 rounded-lg border border-slate-600 shadow-md">
-        <label className="block text-sm font-semibold text-slate-200 mb-2 text-center">
-          Identidad / PIN de Seguridad
-        </label>
-        <input 
-          type="text" 
-          value={ownerId}
-          onChange={(e) => setOwnerId(e.target.value)}
-          placeholder="Ej: lab_linsi"
-          className="w-full p-2 bg-slate-900 border border-slate-700 rounded text-slate-200 text-center focus:outline-none focus:border-blue-500 transition-colors"
-        />
-        <p className="text-xs text-slate-400 mt-2 text-center">Este ID es necesario tanto para cifrar como para recuperar.</p>
-      </div>
+      {/* ELIMINAMOS EL INPUT DEL PIN MANUAL */}
 
-      <div className="grid md:grid-cols-2 gap-8 max-w-6xl mx-auto">
+      <div className="grid md:grid-cols-2 gap-8 max-w-6xl mx-auto mt-12">
         {/* PANEL IZQUIERDO: CIFRAR */}
         <div className="bg-slate-800 p-6 rounded-xl shadow-lg border border-slate-700 flex flex-col">
           <h2 className="text-2xl font-semibold mb-4 text-emerald-400">1. Cifrar y Distribuir</h2>

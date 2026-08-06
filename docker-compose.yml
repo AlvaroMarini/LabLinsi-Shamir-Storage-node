@@ -7,7 +7,7 @@ services:
       # Le indicamos al WAF a quién debe proteger
       - BACKEND=http://frontend:80
     ports:
-      - "5173:80" # El WAF es ahora el único que da la cara al mundo
+      - "5173:8080" # El WAF es ahora el único que da la cara al mundo
     networks:
       - public_net
     restart: unless-stopped
@@ -112,6 +112,35 @@ services:
     networks:
       - private_net
     restart: unless-stopped
+
+  # --- MOVER KEYCLOAK ACÁ, ADENTRO DE SERVICES ---
+  postgres_keycloak:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: keycloak
+      POSTGRES_USER: keycloak
+      POSTGRES_PASSWORD: super_secret_password
+    volumes:
+      - ./keycloak_data:/var/lib/postgresql/data
+    networks:
+      - public_net
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:24.0.0
+    command: start-dev
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres_keycloak:5432/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: super_secret_password
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    depends_on:
+      - postgres_keycloak
+    networks:
+      - public_net
 
 # DEFINICIÓN DE LA MICROSEGMENTACIÓN ZERO TRUST
 networks:
