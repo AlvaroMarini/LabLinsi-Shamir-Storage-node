@@ -72,3 +72,14 @@ def retrieve_share(secret_id: str, owner_id: str, api_key: str = Depends(get_int
             raise HTTPException(status_code=403, detail="Acceso denegado o archivo inexistente.")
             
         return dict(row)
+
+@app.get("/internal/fragments")
+def get_all_fragments(api_key: str = Depends(get_internal_key)):
+    with sqlite3.connect(DB_PATH) as conn:
+        conn.row_factory = sqlite3.Row 
+        cursor = conn.cursor()
+        # Traemos todos los fragmentos almacenados
+        cursor.execute('SELECT secret_id, owner_id, x, y, hash FROM fragments')
+        rows = cursor.fetchall()
+        
+        return [dict(row) for row in rows]

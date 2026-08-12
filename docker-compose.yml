@@ -124,6 +124,7 @@ services:
       - ./keycloak_data:/var/lib/postgresql/data
     networks:
       - public_net
+    restart: unless-stopped
 
   keycloak:
     image: quay.io/keycloak/keycloak:24.0.0
@@ -141,6 +142,7 @@ services:
       - postgres_keycloak
     networks:
       - public_net
+    restart: unless-stopped
 
 # DEFINICIÓN DE LA MICROSEGMENTACIÓN ZERO TRUST
 networks:

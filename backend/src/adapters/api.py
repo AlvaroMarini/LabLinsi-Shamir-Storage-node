@@ -8,6 +8,8 @@ from fastapi import FastAPI, HTTPException, Security, Depends
 from fastapi.security import APIKeyHeader, HTTPBearer, HTTPAuthorizationCredentials
 from pydantic import BaseModel
 from src.domain.shamir import ShamirScheme
+from contextlib import asynccontextmanager
+from collections import defaultdict
 
 load_dotenv()
 
@@ -59,7 +61,78 @@ async def get_current_user(credentials: HTTPAuthorizationCredentials = Security(
     except Exception as e:
         raise HTTPException(status_code=401, detail="Acceso denegado: Token adulterado o inválido.")
 
-app = FastAPI(title="Shamir Gateway Node")
+async def rotate_secrets():
+    print("[PSS] Iniciando rotación proactiva de fragmentos...")
+    secrets_data = defaultdict(lambda: defaultdict(list))
+
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        headers = {"x-api-key": INTERNAL_CLUSTER_KEY}
+
+        # 1. Recolectar fragmentos de todos los nodos
+        for node in NODES:
+            try:
+                resp = await client.get(f"{node}/internal/fragments", headers=headers)
+                if resp.status_code == 200:
+                    for item in resp.json():
+                        sec_id = item["secret_id"]
+                        own_id = item["owner_id"]
+                        secrets_data[sec_id][own_id].append((item["x"], bytes.fromhex(item["y"]), item["hash"]))
+            except Exception as e:
+                print(f"Error conectando al {node}: {e}")
+
+        shamir = ShamirScheme(total_shares=5, threshold=3)
+
+        # 2. Reconstruir y rotar (Polinomios nuevos)
+        for sec_id, owners in secrets_data.items():
+            for own_id, shares in owners.items():
+                # Filtramos para tener fragmentos únicos
+                unique_shares = {s[0]: s for s in shares}.values()
+                if len(unique_shares) >= 3:
+                    try:
+                        raw_shares = list(unique_shares)
+                        secret_bytes = shamir.recover_secret(raw_shares)
+
+                        # Acá ocurre la magia: nuevos coeficientes aleatorios
+                        new_shares = shamir.split_secret(secret_bytes)
+
+                        # Distribuir la nueva curva matemática
+                        # Distribuir la nueva curva matemática en PARALELO
+                        tasks = []
+                        for i, share in enumerate(new_shares):
+                            if i < len(NODES):
+                                payload = {
+                                    "x": share[0],
+                                    "y": share[1].hex(),
+                                    "hash": share[2],
+                                    "owner_id": own_id # Mantenemos al dueño original
+                                }
+                                url = f"{NODES[i]}/store/{sec_id}"
+                                tasks.append(client.post(url, json=payload, headers=headers))
+                        
+                        # Disparamos a las 5 bóvedas al mismo tiempo, ignorando fallas individuales
+                        await asyncio.gather(*tasks, return_exceptions=True)
+                        
+                        print(f"Secreto {sec_id[:8]}... rotado con éxito.")
+                    except Exception as e:
+                        print(f"Error rotando secreto {sec_id}: {e}")
+
+# Loop infinito en segundo plano
+async def pss_background_task():
+    while True:
+        # Espera 24 horas (86400 segundos). 
+        # NOTA: Cambiá este valor a 60 para hacer tu prueba local antes de mandarlo al rack.
+        # await asyncio.sleep(86400) 
+        await asyncio.sleep(60)
+        await rotate_secrets()
+
+# Gestor del ciclo de vida del servidor
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    task = asyncio.create_task(pss_background_task())
+    yield
+    task.cancel()
+
+app = FastAPI(title="Shamir Gateway Node", lifespan=lifespan)
 
 NODES = [
     "http://node-1:8000",
@@ -68,7 +141,6 @@ NODES = [
     "http://node-4:8000",
     "http://node-5:8000"
 ]
-
 class SplitRequest(BaseModel):
     secret_id: str
     secret: str
